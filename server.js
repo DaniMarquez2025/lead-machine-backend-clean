@@ -1,30 +1,43 @@
 import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
 import Stripe from "stripe";
 import admin from "firebase-admin";
 
+dotenv.config();
+
 const app = express();
+app.use(cors());
 app.use(express.json());
 
-// 🔑 STRIPE
-const stripe = new Stripe(process.env.STRIPE_SECRET);
+/* =========================
+   🔥 FIREBASE CONFIG
+========================= */
 
-// 🔥 FIREBASE (desde variable de entorno)
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+const firebaseKey = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(firebaseKey),
 });
 
 const db = admin.firestore();
 
-// ===============================
-// 🧪 TEST MANUAL
-// ===============================
+/* =========================
+   💳 STRIPE CONFIG
+========================= */
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+/* =========================
+   🧪 TEST MANUAL
+========================= */
+
 app.get("/test-payment", async (req, res) => {
   try {
     const email = "test@test.com";
 
-    const snapshot = await db.collection("users")
+    const snapshot = await db
+      .collection("users")
       .where("email", "==", email)
       .get();
 
@@ -32,70 +45,60 @@ app.get("/test-payment", async (req, res) => {
       return res.send("❌ Usuario no encontrado");
     }
 
-    for (const docu of snapshot.docs) {
-      await db.collection("users").doc(docu.id).update({
-        paid: true
+    for (const doc of snapshot.docs) {
+      await db.collection("users").doc(doc.id).update({
+        paid: true,
       });
     }
 
     res.send("✅ Usuario actualizado a paid");
-
   } catch (error) {
     console.error(error);
     res.status(500).send("❌ Error");
   }
 });
 
-// ===============================
-// 💳 WEBHOOK STRIPE
-// ===============================
-app.post("/webhook", async (req, res) => {
+/* =========================
+   💳 CREAR CHECKOUT STRIPE
+========================= */
+
+app.post("/create-checkout-session", async (req, res) => {
   try {
-    const event = req.body;
+    const { email } = req.body;
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            product_data: {
+              name: "Acceso premium",
+            },
+            unit_amount: 2000, // 20€
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: "https://tuweb.com/success",
+      cancel_url: "https://tuweb.com/cancel",
+    });
 
-      const email = session.customer_details?.email;
-
-      if (!email) {
-        console.log("❌ No email");
-        return res.sendStatus(200);
-      }
-
-      const snapshot = await db.collection("users")
-        .where("email", "==", email)
-        .get();
-
-      for (const docu of snapshot.docs) {
-        await db.collection("users").doc(docu.id).update({
-          paid: true
-        });
-      }
-
-      console.log("✅ Usuario actualizado:", email);
-    }
-
-    res.sendStatus(200);
-
+    res.json({ url: session.url });
   } catch (error) {
-    console.error("Webhook error:", error);
-    res.sendStatus(500);
+    console.error(error);
+    res.status(500).send("Error creando pago");
   }
 });
 
-// ===============================
-// 🌐 ROOT
-// ===============================
-app.get("/", (req, res) => {
-  res.send("Servidor funcionando 🚀");
-});
+/* =========================
+   🚀 SERVER START
+========================= */
 
-// ===============================
-// 🚀 SERVER
-// ===============================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Servidor corriendo en puerto " + PORT);
 });

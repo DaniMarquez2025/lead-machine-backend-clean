@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
-import admin from "firebase-admin";
 
 dotenv.config();
 
@@ -10,66 +9,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* =========================
-   🔥 FIREBASE CONFIG
-========================= */
-
-const firebaseKey = JSON.parse(process.env.FIREBASE_KEY);
-
-admin.initializeApp({
-  credential: admin.credential.cert(firebaseKey),
-});
-
-const db = admin.firestore();
-
-/* =========================
-   💳 STRIPE CONFIG
-========================= */
-
+// 🔐 Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-/* =========================
-   🧪 TEST MANUAL
-========================= */
-
-app.get("/test-payment", async (req, res) => {
-  try {
-    const email = "test@test.com";
-
-    const snapshot = await db
-      .collection("users")
-      .where("email", "==", email)
-      .get();
-
-    if (snapshot.empty) {
-      return res.send("❌ Usuario no encontrado");
-    }
-
-    for (const doc of snapshot.docs) {
-      await db.collection("users").doc(doc.id).update({
-        paid: true,
-      });
-    }
-
-    res.send("✅ Usuario actualizado a paid");
-  } catch (error) {
-    console.error(error);
-    res.status(500).send("❌ Error");
-  }
+// 🟢 Ruta base
+app.get("/", (req, res) => {
+  res.send("Servidor funcionando 🚀");
 });
 
-/* =========================
-   💳 CREAR CHECKOUT STRIPE
-========================= */
-
-app.post("/create-checkout-session", async (req, res) => {
+// 💳 TEST CHECKOUT (SIN USUARIO)
+app.get("/test-payment", async (req, res) => {
   try {
-    const { email } = req.body;
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
-      customer_email: email,
       line_items: [
         {
           price_data: {
@@ -82,23 +35,19 @@ app.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: "https://tuweb.com/success",
-      cancel_url: "https://tuweb.com/cancel",
+      success_url: "https://google.com",
+      cancel_url: "https://google.com",
     });
 
-    res.json({ url: session.url });
+    res.redirect(session.url);
   } catch (error) {
     console.error(error);
-    res.status(500).send("Error creando pago");
+    res.status(500).send("Error creando sesión");
   }
 });
 
-/* =========================
-   🚀 SERVER START
-========================= */
-
-const PORT = process.env.PORT || 10000;
-
+// 🚀 PUERTO
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto " + PORT);
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });

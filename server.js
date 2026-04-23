@@ -6,6 +6,10 @@ import Stripe from "stripe";
 dotenv.config();
 
 const app = express();
+
+// ⚠️ IMPORTANTE: webhook necesita raw antes que json
+app.use("/webhook", express.raw({ type: "application/json" }));
+
 app.use(cors());
 app.use(express.json());
 
@@ -17,7 +21,7 @@ app.get("/", (req, res) => {
   res.send("Servidor funcionando 🚀");
 });
 
-// 💳 TEST CHECKOUT (SIN USUARIO)
+// 💳 TEST CHECKOUT
 app.get("/test-payment", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
@@ -30,7 +34,7 @@ app.get("/test-payment", async (req, res) => {
             product_data: {
               name: "Acceso premium",
             },
-            unit_amount: 2000, // 20€
+            unit_amount: 2000,
           },
           quantity: 1,
         },
@@ -44,6 +48,33 @@ app.get("/test-payment", async (req, res) => {
     console.error(error);
     res.status(500).send("Error creando sesión");
   }
+});
+
+// 🔔 WEBHOOK STRIPE
+app.post("/webhook", (req, res) => {
+  const sig = req.headers["stripe-signature"];
+
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.log("❌ Error webhook:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // ✅ Pago completado
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+
+    console.log("💰 Pago completado:", session.id);
+  }
+
+  res.json({ received: true });
 });
 
 // 🚀 PUERTO

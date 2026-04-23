@@ -19,8 +19,8 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// ⚠️ IMPORTANTE: webhook necesita raw
-app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+// ⚠️ WEBHOOK (RAW BODY)
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
 
   let event;
@@ -45,29 +45,26 @@ app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
     console.log("💰 Pago completado:", session.id);
     console.log("📧 Email:", email);
 
-    // 🔥 GUARDAR EN FIREBASE
-    db.collection("users")
-      .doc(email)
-      .set(
+    try {
+      await db.collection("users").doc(email).set(
         {
           email: email,
           premium: true,
           updatedAt: new Date(),
         },
         { merge: true }
-      )
-      .then(() => {
-        console.log("🔥 Usuario actualizado a PREMIUM");
-      })
-      .catch((error) => {
-        console.error("❌ Error Firebase:", error);
-      });
+      );
+
+      console.log("🔥 Usuario actualizado a PREMIUM");
+    } catch (error) {
+      console.error("❌ Error Firebase:", error);
+    }
   }
 
   res.json({ received: true });
 });
 
-// 👇 DESPUÉS del webhook ya usamos json
+// 👇 NORMAL MIDDLEWARE
 app.use(cors());
 app.use(express.json());
 
@@ -92,8 +89,8 @@ app.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: "https://tuweb.com/success",
-      cancel_url: "https://tuweb.com/cancel",
+      success_url: "https://google.com",
+      cancel_url: "https://google.com",
     });
 
     res.json({ url: session.url });
@@ -103,7 +100,7 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// 🧪 TEST PAYMENT (para probar rápido)
+// 🧪 TEST PAYMENT
 app.get("/test-payment", async (req, res) => {
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ["card"],
@@ -126,6 +123,28 @@ app.get("/test-payment", async (req, res) => {
   });
 
   res.redirect(session.url);
+});
+
+// 🔒 CHECK PREMIUM
+app.post("/check-premium", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const userDoc = await db.collection("users").doc(email).get();
+
+    if (!userDoc.exists) {
+      return res.json({ premium: false });
+    }
+
+    const userData = userDoc.data();
+
+    res.json({
+      premium: userData.premium === true,
+    });
+  } catch (error) {
+    console.error("Error check premium:", error);
+    res.status(500).json({ error: "Error servidor" });
+  }
 });
 
 // 🚀 SERVER

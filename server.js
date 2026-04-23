@@ -1,32 +1,85 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import Stripe from "stripe";
-
-dotenv.config();
+import admin from "firebase-admin";
 
 const app = express();
 
-// ⚠️ IMPORTANTE: webhook necesita raw antes que json
-app.use("/webhook", express.raw({ type: "application/json" }));
+// 🔥 STRIPE
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+// 🔥 FIREBASE
+if (!admin.apps.length) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+
+const db = admin.firestore();
+
+// ⚠️ IMPORTANTE: webhook necesita raw
+app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  const sig = req.headers["stripe-signature"];
+
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Error webhook:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // 💰 PAGO COMPLETADO
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+
+    const email = session.customer_details.email;
+
+    console.log("💰 Pago completado:", session.id);
+    console.log("📧 Email:", email);
+
+    // 🔥 GUARDAR EN FIREBASE
+    db.collection("users")
+      .doc(email)
+      .set(
+        {
+          email: email,
+          premium: true,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      )
+      .then(() => {
+        console.log("🔥 Usuario actualizado a PREMIUM");
+      })
+      .catch((error) => {
+        console.error("❌ Error Firebase:", error);
+      });
+  }
+
+  res.json({ received: true });
+});
+
+// 👇 DESPUÉS del webhook ya usamos json
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-// 🟢 Ruta base
-app.get("/", (req, res) => {
-  res.send("Servidor funcionando 🚀");
-});
-
-// 💳 TEST CHECKOUT
-app.get("/test-payment", async (req, res) => {
+// 🚀 CREAR CHECKOUT
+app.post("/create-checkout-session", async (req, res) => {
   try {
+    const { email } = req.body;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
+      customer_email: email,
       line_items: [
         {
           price_data: {
@@ -39,46 +92,45 @@ app.get("/test-payment", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: "https://google.com",
-      cancel_url: "https://google.com",
+      success_url: "https://tuweb.com/success",
+      cancel_url: "https://tuweb.com/cancel",
     });
 
-    res.redirect(session.url);
+    res.json({ url: session.url });
   } catch (error) {
     console.error(error);
-    res.status(500).send("Error creando sesión");
+    res.status(500).json({ error: "Error creando checkout" });
   }
 });
 
-// 🔔 WEBHOOK STRIPE
-app.post("/webhook", (req, res) => {
-  const sig = req.headers["stripe-signature"];
+// 🧪 TEST PAYMENT (para probar rápido)
+app.get("/test-payment", async (req, res) => {
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ["card"],
+    mode: "payment",
+    customer_email: "test@test.com",
+    line_items: [
+      {
+        price_data: {
+          currency: "eur",
+          product_data: {
+            name: "Test pago",
+          },
+          unit_amount: 2000,
+        },
+        quantity: 1,
+      },
+    ],
+    success_url: "https://google.com",
+    cancel_url: "https://google.com",
+  });
 
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.log("❌ Error webhook:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  // ✅ Pago completado
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-
-    console.log("💰 Pago completado:", session.id);
-  }
-
-  res.json({ received: true });
+  res.redirect(session.url);
 });
 
-// 🚀 PUERTO
-const PORT = process.env.PORT || 3000;
+// 🚀 SERVER
+const PORT = process.env.PORT || 10000;
+
 app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
 });

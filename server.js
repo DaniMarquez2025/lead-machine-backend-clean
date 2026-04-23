@@ -8,7 +8,7 @@ dotenv.config();
 
 const app = express();
 
-// ⚠️ IMPORTANTE PARA WEBHOOK
+// ⚠️ WEBHOOK RAW
 app.use('/webhook', express.raw({ type: 'application/json' }));
 
 app.use(cors());
@@ -26,29 +26,31 @@ const db = admin.firestore();
 // 💳 STRIPE
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// 🟢 CREAR CHECKOUT (CORREGIDO)
+// 🚀 CREAR SUSCRIPCIÓN
 app.post("/create-checkout-session", async (req, res) => {
   try {
     const { email } = req.body;
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
+      mode: "subscription",
       customer_email: email,
+
       line_items: [
         {
           price_data: {
             currency: "eur",
             product_data: {
-              name: "Acceso Premium",
+              name: "Acceso Premium Mensual",
             },
-            unit_amount: 2000,
+            unit_amount: 1000,
+            recurring: {
+              interval: "month",
+            },
           },
           quantity: 1,
         },
       ],
 
-      // 🔥 REDIRECCIÓN PERFECTA
       success_url: "http://localhost:3000/index.html",
       cancel_url: "http://localhost:3000/landing.html",
     });
@@ -56,12 +58,57 @@ app.post("/create-checkout-session", async (req, res) => {
     res.json({ url: session.url });
 
   } catch (error) {
-    console.error("❌ Error creando checkout:", error);
+    console.error(error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// 🟢 WEBHOOK (CLAVE)
+// 🔥 CANCELAR SUSCRIPCIÓN (NUEVO)
+app.post("/cancel-subscription", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // 1. Buscar cliente en Stripe
+    const customers = await stripe.customers.list({
+      email: email,
+      limit: 1,
+    });
+
+    if (!customers.data.length) {
+      return res.status(404).json({ error: "Cliente no encontrado" });
+    }
+
+    const customer = customers.data[0];
+
+    // 2. Buscar suscripciones activas
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customer.id,
+      status: "active",
+    });
+
+    if (!subscriptions.data.length) {
+      return res.status(404).json({ error: "No hay suscripción activa" });
+    }
+
+    const subscription = subscriptions.data[0];
+
+    // 3. Cancelar suscripción
+    await stripe.subscriptions.del(subscription.id);
+
+    // 4. Actualizar Firebase
+    await db.collection("users").doc(email).update({
+      premium: false,
+    });
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error("Error cancelando:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 🔥 WEBHOOK
 app.post("/webhook", (req, res) => {
   const sig = req.headers["stripe-signature"];
 
@@ -78,23 +125,16 @@ app.post("/webhook", (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // 💥 PAGO COMPLETADO
+  // 💰 ACTIVAR PREMIUM
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-
     const email = session.customer_email;
 
-    console.log("💰 Pago completado:", session.id);
-    console.log("📧 Email:", email);
-
-    // 🔥 GUARDAR EN FIREBASE
     db.collection("users").doc(email).set({
       email: email,
       premium: true,
       updatedAt: new Date(),
     });
-
-    console.log("🔥 Usuario actualizado a PREMIUM");
   }
 
   res.json({ received: true });

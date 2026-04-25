@@ -42,7 +42,7 @@ app.post("/create-checkout-session", async (req, res) => {
             product_data: {
               name: "Acceso Premium Mensual",
             },
-            unit_amount: 1000,
+            unit_amount: 990, // ✅ 9,90€
             recurring: {
               interval: "month",
             },
@@ -63,12 +63,11 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// 🔥 CANCELAR SUSCRIPCIÓN (NUEVO)
+// 🔥 CANCELAR SUSCRIPCIÓN
 app.post("/cancel-subscription", async (req, res) => {
   try {
     const { email } = req.body;
 
-    // 1. Buscar cliente en Stripe
     const customers = await stripe.customers.list({
       email: email,
       limit: 1,
@@ -80,7 +79,6 @@ app.post("/cancel-subscription", async (req, res) => {
 
     const customer = customers.data[0];
 
-    // 2. Buscar suscripciones activas
     const subscriptions = await stripe.subscriptions.list({
       customer: customer.id,
       status: "active",
@@ -92,10 +90,8 @@ app.post("/cancel-subscription", async (req, res) => {
 
     const subscription = subscriptions.data[0];
 
-    // 3. Cancelar suscripción
     await stripe.subscriptions.del(subscription.id);
 
-    // 4. Actualizar Firebase
     await db.collection("users").doc(email).update({
       premium: false,
     });
@@ -125,7 +121,6 @@ app.post("/webhook", (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // 💰 ACTIVAR PREMIUM
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const email = session.customer_email;
